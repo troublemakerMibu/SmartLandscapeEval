@@ -9,6 +9,7 @@ from reportlab.pdfbase.ttfonts import TTFont
 import os
 from datetime import datetime
 from typing import Dict, List, Tuple
+from LLMconfig import call_LLM
 
 class ReportGenerator:
     def __init__(self):
@@ -38,6 +39,15 @@ class ReportGenerator:
             fontSize=12,
             spaceAfter = 6
         ))
+        self.styles.add(ParagraphStyle(
+        name='ChineseEvaluation',
+        fontName='SimHei',  #
+        fontSize=14,        # 四号字（大约14pt）
+        leading=21,         # 1.5倍行距（约21pt）
+        firstLineIndent=28, # 首行缩进两字符（每个中文字体宽度约为14pt的一半，因此2字符≈28pt）
+        spaceAfter=6        # 段后间距
+        ))
+
 
     def generate_supplier_report(self, supplier_name: str, analysis_data: Dict,
                                  output_path: str):
@@ -46,7 +56,7 @@ class ReportGenerator:
         story = []
 
         # 标题页
-        story.append(Paragraph(f"{supplier_name}<br/>供应商评估报告", self.styles['ChineseTitle']))
+        story.append(Paragraph(f"{supplier_name}<br/><br/>供应商评估报告", self.styles['ChineseTitle']))
         story.append(Spacer(1, 0.2 * inch))
         story.append(Paragraph(f"生成日期：{datetime.now().strftime('%Y年%m月%d日')}",
                                self.styles['ChineseNormal']))
@@ -87,7 +97,7 @@ class ReportGenerator:
 
         # 物管处维度
         story.append(Paragraph("2.1 物管处评估维度", self.styles['ChineseNormal']))
-        property_dim_data = [['维度', '得分', '满分', '得分率']]
+        property_dim_data = [['维度', '得分', '满分', '最终得分']]
         for dim, score in analysis_data['dimension_scores']['property'].items():
             dim_name = self._get_dimension_name('property', dim)
             score_rate = (score / 5) * 100
@@ -100,7 +110,7 @@ class ReportGenerator:
 
         # 职能部门维度
         story.append(Paragraph("2.2 职能部门评估维度", self.styles['ChineseNormal']))
-        functional_dim_data = [['维度', '得分', '满分', '得分率']]
+        functional_dim_data = [['维度', '得分', '满分', '最终得分']]
         for dim, score in analysis_data['dimension_scores']['functional'].items():
             dim_name = self._get_dimension_name('functional', dim)
             score_rate = (score / 5) * 100
@@ -147,6 +157,11 @@ class ReportGenerator:
                 story.append(Paragraph(f"{i}. {feedback}", self.styles['ChineseNormal']))
         else:
             story.append(Paragraph("暂无问题反馈", self.styles['ChineseNormal']))
+
+        # 调用大模型生成最终评价
+        feedback = self._generate_feedback(analysis_data)
+        story.append(Paragraph("4.3 综合评价", self.styles['ChineseEvaluation']))
+        story.append(Paragraph(feedback, self.styles['ChineseEvaluation']))
 
         # 生成PDF
         doc.build(story)
@@ -243,3 +258,7 @@ class ReportGenerator:
             return "基本合格"
         else:
             return "不合格"
+
+    # 调用大模型生成最终评价
+    def _generate_feedback(self, analysis_data: Dict):
+        return call_LLM(analysis_data)

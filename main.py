@@ -58,7 +58,7 @@ class SupplierEvaluationSystem:
 
     def analyze_supplier(self, supplier_name: str) -> Dict:
         """分析单个供应商"""
-        print(f"\\n正在分析供应商: {supplier_name}")
+        print(f"\n正在分析供应商: {supplier_name}")
 
         # 获取评估数据
         evaluations = self.db_manager.get_supplier_evaluations(supplier_name)
@@ -143,7 +143,7 @@ class SupplierEvaluationSystem:
 
     def generate_all_reports(self):
         """生成所有供应商报告"""
-        print("\\n开始生成供应商评估报告...")
+        print("\n开始生成供应商评估报告...")
 
         # 获取所有供应商
         suppliers = self.db_manager.get_all_suppliers()
@@ -192,10 +192,10 @@ class SupplierEvaluationSystem:
         )
 
         self.report_generator.generate_summary_report(rankings, summary_path)
-        print(f"\\n已生成汇总报告: {summary_path}")
+        print(f"\n已生成汇总报告: {summary_path}")
 
         # 打印排名结果
-        print("\\n=== 供应商综合排名 ===")
+        print("\n=== 供应商综合排名 ===")
         print(f"{'排名':<5} {'供应商名称':<30} {'综合得分':<10} {'评级':<10}")
         print("-" * 60)
         for supplier, score, rank in rankings:
@@ -225,7 +225,7 @@ class SupplierEvaluationSystem:
         # 3. 生成所有报告
         self.generate_all_reports()
 
-        print(f"\\n处理完成! 结束时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"\n处理完成! 结束时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         print(f"报告输出目录: {self.config.REPORTS_DIR}")
         print(f"图表输出目录: {self.config.CHARTS_DIR}")
 
@@ -235,7 +235,7 @@ def main():
         system = SupplierEvaluationSystem()
         system.run()
     except Exception as e:
-        print(f"\\n错误: {str(e)}")
+        print(f"\n错误: {str(e)}")
         import traceback
         traceback.print_exc()
 
