@@ -6,6 +6,7 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
+from reportlab.lib.enums import TA_JUSTIFY
 import os
 from datetime import datetime
 from typing import Dict, List, Tuple
@@ -16,10 +17,10 @@ class ReportGenerator:
         # 注册中文字体
         try:
             from reportlab.pdfbase.cidfonts import UnicodeCIDFont
-            # pdfmetrics.registerFont(UnicodeCIDFont('STSong-Light'))
-            pdfmetrics.registerFont(UnicodeCIDFont('simhei'))
-            # self.chinese_font = 'STSong-Light'
-            self.chinese_font = 'simhei'
+            pdfmetrics.registerFont(UnicodeCIDFont('STSong-Light'))
+            self.chinese_font = 'STSong-Light'
+            print("已注册中文字体STSong-Light")
+
         except:
             try:
                 if os.path.exists('simhei.ttf'):
@@ -35,27 +36,39 @@ class ReportGenerator:
         self.styles.add(ParagraphStyle(
             name='ChineseTitle',
             fontName=self.chinese_font,
-            fontSize=24,
+            fontSize=22,
             alignment = 1,  # 居中
-            spaceAfter = 30
+            spaceAfter = 30,
+            wordWrap='CJK'
         ))
         self.styles.add(ParagraphStyle(
             name='ChineseHeading',
             fontName=self.chinese_font,
             fontSize=18,
-            spaceAfter=12
+            spaceAfter=24,
+            wordWrap='CJK'
         ))
         self.styles.add(ParagraphStyle(
             name='ChineseNormal',
             fontName=self.chinese_font,
-            fontSize=14,
-            spaceAfter=6
-        ))
-        self.styles.add(ParagraphStyle(
-            name='ChineseEvaluation',
-            fontName=self.chinese_font,
             fontSize=12,
-            spaceAfter=6
+            spaceAfter=16,
+            wordWrap='CJK'
+        ))
+
+        # 添加大模型评价专用样式
+        self.styles.add(ParagraphStyle(
+            name='LLMFeedback',
+            fontName=self.chinese_font,  # 宋体
+            fontSize=12,  # 字号12
+            leading=18,  # 行距（12 * 1.5 = 18）
+            firstLineIndent=24,  # 首行缩进2个字符（12号字体，2个字符约24点）
+            alignment=TA_JUSTIFY,  # 两端对齐
+            spaceAfter=12,
+            spaceBefore=0,
+            leftIndent=0,
+            rightIndent=0,
+            wordWrap='CJK'  # 中文自动换行
         ))
 
     def generate_supplier_report(self, supplier_name: str, analysis_data: Dict,
@@ -84,9 +97,9 @@ class ReportGenerator:
 
             score_data = [
                 ['评估类型', '得分', '权重', '加权得分'],
-                ['物管处评估', f"{analysis_data.get('property_score', 0):.2f}", '40%',  # 改为40%
+                ['物管处评估', f"{analysis_data.get('property_score', 0):.2f}", '40%',
                  f"{analysis_data.get('property_score', 0) * 0.4:.2f}"],
-                ['职能部门评估', f"{analysis_data.get('functional_score', 0):.2f}", '60%',  # 改为60%
+                ['职能部门评估', f"{analysis_data.get('functional_score', 0):.2f}", '60%',
                  f"{analysis_data.get('functional_score', 0) * 0.6:.2f}"],
                 ['综合得分', '', '', f"{analysis_data.get('total_score', 0):.2f}"],
                 ['评级', '', '', analysis_data.get('level', '未知')],
@@ -114,7 +127,6 @@ class ReportGenerator:
             story.append(score_table)
             story.append(Spacer(1, 0.3 * inch))
 
-            # 后续内容保持不变...
             # 2. 维度分析
             story.append(Paragraph("二、维度分析", self.styles['ChineseHeading']))
 
@@ -190,16 +202,29 @@ class ReportGenerator:
                     story.append(Paragraph(f"{i}. {feedback}", self.styles['ChineseNormal']))
             else:
                 story.append(Paragraph("暂无问题反馈", self.styles['ChineseNormal']))
-            # 调用大模型生成最终评价
-            # feedback = self._generate_feedback(analysis_data)
-            # story.append(Paragraph("4.3 综合评价", self.styles['ChineseNormal']))
-            # story.append(Paragraph(feedback, self.styles['ChineseNormal']))
+
+            story.append(Spacer(1, 0.3 * inch))
+
+            # 调用大模型生成最终评价（使用特定格式）
+            feedback = self._generate_feedback(analysis_data)
+            story.append(Paragraph("4.3 综合评价", self.styles['ChineseHeading']))
+
+            # 将反馈文本按段落分割，每段都应用格式
+            paragraphs = feedback.split('\n\n') if '\n\n' in feedback else feedback.split('\n')
+            for para in paragraphs:
+                if para.strip():  # 忽略空段落
+                    # 使用专门的LLM反馈样式
+                    story.append(Paragraph(para.strip(), self.styles['LLMFeedback']))
+
+            print('综合评价生成成功')
+
             # 生成PDF
             doc.build(story)
-            print(f"成功生成报告: {output_path}")
 
         except Exception as e:
             print(f"生成供应商报告时出错: {str(e)}")
+            import traceback
+            traceback.print_exc()
             self._generate_matplotlib_report(supplier_name, analysis_data, output_path)
 
     def generate_summary_report_by_area(self, rankings_by_area: Dict[str, List[Tuple[str, float, int]]],
@@ -483,4 +508,5 @@ class ReportGenerator:
 
     # 调用大模型生成最终评价
     def _generate_feedback(self, analysis_data: Dict):
+        print('正在调用大模型生成评价...')
         return call_LLM(analysis_data)

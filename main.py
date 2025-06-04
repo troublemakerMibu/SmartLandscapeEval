@@ -225,7 +225,7 @@ class SupplierEvaluationSystem:
                     self.config.REPORTS_DIR,
                     f'{supplier}_评估报告_{datetime.now().strftime("%Y%m%d")}.pdf'
                 )
-
+                print(f'开始生成供应商：{supplier}评估报告')
                 self.report_generator.generate_supplier_report(
                     supplier,
                     all_results[supplier],
@@ -284,20 +284,20 @@ class SupplierEvaluationSystem:
         print("=== 供应商评估系统 ===")
         print(f"启动时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
-        # 1. 加载问卷配置（如果有JSON文件）
-        # self.load_questionnaires('property_questionnaire.json', 'functional_questionnaire.json')
-
-        # 2. 导入Excel数据
-        property_excel = os.path.join(self.config.DATA_DIR, 'property_evaluation.xlsx')
-        functional_excel = os.path.join(self.config.DATA_DIR, 'functional_evaluation.xlsx')
-
-        if os.path.exists(property_excel) or os.path.exists(functional_excel):
-            self.import_excel_data(property_excel, functional_excel)
-        else:
-            print("提示: 请将Excel文件放置在data目录下")
-            print(f"  - 物管处数据: {property_excel}")
-            print(f"  - 职能部门数据: {functional_excel}")
-            return
+        # # 1. 加载问卷配置（如果有JSON文件）
+        # # self.load_questionnaires('property_questionnaire.json', 'functional_questionnaire.json')
+        #
+        # # 2. 导入Excel数据
+        # property_excel = os.path.join(self.config.DATA_DIR, 'property_evaluation.xlsx')
+        # functional_excel = os.path.join(self.config.DATA_DIR, 'functional_evaluation.xlsx')
+        #
+        # if os.path.exists(property_excel) or os.path.exists(functional_excel):
+        #     self.import_excel_data(property_excel, functional_excel)
+        # else:
+        #     print("提示: 请将Excel文件放置在data目录下")
+        #     print(f"  - 物管处数据: {property_excel}")
+        #     print(f"  - 职能部门数据: {functional_excel}")
+        #     return
         self.test_database_content()
         # 3. 生成所有报告
         self.generate_all_reports()
