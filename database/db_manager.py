@@ -1,7 +1,7 @@
 """数据库管理"""
 import sqlite3
 import json
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Tuple
 from datetime import datetime
 from .models import Supplier, Evaluation, EvaluationDimension
 
@@ -22,14 +22,21 @@ class DatabaseManager:
         with self._get_connection() as conn:
             cursor = conn.cursor()
 
-            # 供应商表
+            # 供应商表（添加service_area字段）
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS suppliers (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     name TEXT UNIQUE NOT NULL,
+                    service_area TEXT DEFAULT '市内',
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             ''')
+
+            # 检查是否需要添加service_area列（兼容旧数据库）
+            cursor.execute("PRAGMA table_info(suppliers)")
+            columns = [column[1] for column in cursor.fetchall()]
+            if 'service_area' not in columns:
+                cursor.execute("ALTER TABLE suppliers ADD COLUMN service_area TEXT DEFAULT '市内'")
 
             # 评估维度表
             cursor.execute('''
@@ -60,17 +67,43 @@ class DatabaseManager:
 
             conn.commit()
 
-    def insert_supplier(self, name: str) -> int:
-        """插入供应商，返回ID"""
+    def insert_supplier(self, name: str, service_area: str = '市内') -> int:
+        """插入供应商，返回ID（如果已存在则返回现有ID）"""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+
+            # 先查询是否已存在
+            cursor.execute("SELECT id FROM suppliers WHERE name = ?", (name,))
+            result = cursor.fetchone()
+
+            if result:
+                # 供应商已存在，更新服务地区（如果需要）并返回现有ID
+                supplier_id = result['id']
+                cursor.execute(
+                    "UPDATE suppliers SET service_area = ? WHERE id = ?",
+                    (service_area, supplier_id)
+                )
+                print(f"  供应商已存在: {name} (ID: {supplier_id})")
+                return supplier_id
+            else:
+                # 供应商不存在，插入新记录
+                cursor.execute(
+                    "INSERT INTO suppliers (name, service_area) VALUES (?, ?)",
+                    (name, service_area)
+                )
+                supplier_id = cursor.lastrowid
+                print(f"  新增供应商: {name} (ID: {supplier_id})")
+                return supplier_id
+
+    def update_supplier_service_area(self, supplier_name: str, service_area: str):
+        """更新供应商服务地区"""
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
-                "INSERT OR IGNORE INTO suppliers (name) VALUES (?)",
-                (name,)
+                "UPDATE suppliers SET service_area = ? WHERE name = ?",
+                (service_area, supplier_name)
             )
-            cursor.execute("SELECT id FROM suppliers WHERE name = ?", (name,))
-            result = cursor.fetchone()
-            return result['id'] if result else None
+            conn.commit()
 
     def insert_evaluation(self, evaluation: Evaluation) -> int:
         """插入评估记录"""
@@ -105,25 +138,65 @@ class DatabaseManager:
         """获取供应商的所有评估记录"""
         with self._get_connection() as conn:
             cursor = conn.cursor()
+
+            # 先查询供应商ID
+            cursor.execute("SELECT id, service_area FROM suppliers WHERE name = ?", (supplier_name,))
+            supplier_row = cursor.fetchone()
+
+            if not supplier_row:
+                print(f"警告: 未找到供应商 {supplier_name}")
+                return []
+
+            supplier_id = supplier_row['id']
+            service_area = supplier_row['service_area']
+
+            # 查询所有评估记录
             cursor.execute('''
-                SELECT e.*, s.name as supplier_name
+                SELECT e.*, s.name as supplier_name, s.service_area
                 FROM evaluations e
                 JOIN suppliers s ON e.supplier_id = s.id
-                WHERE s.name = ?
-            ''', (supplier_name,))
+                WHERE s.id = ?
+            ''', (supplier_id,))
 
             results = []
-            for row in cursor.fetchall():
+            rows = cursor.fetchall()
+
+            print(f"\\n从数据库获取供应商 {supplier_name} 的评估记录:")
+            print(f"  供应商ID: {supplier_id}")
+            print(f"  找到 {len(rows)} 条评估记录")
+
+            for i, row in enumerate(rows):
                 record = dict(row)
-                record['scores'] = json.loads(record['scores']) if record['scores'] else {}
-                record['feedback'] = json.loads(record['feedback']) if record['feedback'] else {}
+
+                # 解析JSON字段
+                try:
+                    record['scores'] = json.loads(record['scores']) if record['scores'] else {}
+                    record['feedback'] = json.loads(record['feedback']) if record['feedback'] else {}
+                except json.JSONDecodeError as e:
+                    print(f"  警告: 解析第{i + 1}条记录的JSON数据失败: {e}")
+                    record['scores'] = {}
+                    record['feedback'] = {}
+
+                # 调试输出
+                print(f"  记录{i + 1}: 类型={record.get('evaluation_type')}, "
+                      f"评估人={record.get('evaluator_name')}, "
+                      f"部门={record.get('evaluator_dept')}, "
+                      f"评分项数={len(record.get('scores', {}))}")
+
                 results.append(record)
 
             return results
 
-    def get_all_suppliers(self) -> List[str]:
-        """获取所有供应商名称"""
+    def get_all_suppliers(self) -> List[Tuple[str, str]]:
+        """获取所有供应商名称和服务地区"""
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT name FROM suppliers")
+            cursor.execute("SELECT name, service_area FROM suppliers")
+            return [(row['name'], row['service_area']) for row in cursor.fetchall()]
+
+    def get_suppliers_by_area(self, service_area: str) -> List[str]:
+        """根据服务地区获取供应商"""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT name FROM suppliers WHERE service_area = ?", (service_area,))
             return [row['name'] for row in cursor.fetchall()]

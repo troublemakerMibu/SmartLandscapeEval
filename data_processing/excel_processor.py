@@ -4,6 +4,7 @@ import numpy as np
 from typing import Dict, List
 from datetime import datetime
 from database.models import Evaluation
+from utils.supplier_config import get_supplier_service_area
 
 class ExcelProcessor:
     def __init__(self, db_manager):
@@ -16,7 +17,9 @@ class ExcelProcessor:
         for _, row in df.iterrows():
             try:
                 supplier_name = row['绿化外包供应商']
-                supplier_id = self.db_manager.insert_supplier(supplier_name)
+                # 获取供应商服务地区
+                service_area = get_supplier_service_area(supplier_name)
+                supplier_id = self.db_manager.insert_supplier(supplier_name, service_area)
 
                 # 提取评分数据
                 scores = self._extract_property_scores(row)
@@ -44,7 +47,7 @@ class ExcelProcessor:
                 )
 
                 self.db_manager.insert_evaluation(evaluation)
-                print(f"成功导入物管处评估记录: {supplier_name} - {evaluation.evaluator_name}")
+                print(f"成功导入物管处评估记录: {supplier_name}({service_area}) - {evaluation.evaluator_name}")
 
             except Exception as e:
                 print(f"处理物管处数据时出错: {str(e)}")
@@ -57,7 +60,9 @@ class ExcelProcessor:
         for _, row in df.iterrows():
             try:
                 supplier_name = row['考核供应商名称']
-                supplier_id = self.db_manager.insert_supplier(supplier_name)
+                # 获取供应商服务地区
+                service_area = get_supplier_service_area(supplier_name)
+                supplier_id = self.db_manager.insert_supplier(supplier_name, service_area)
 
                 # 提取评分数据
                 scores = self._extract_functional_scores(row)
@@ -75,11 +80,13 @@ class ExcelProcessor:
                 )
 
                 self.db_manager.insert_evaluation(evaluation)
-                print(f"成功导入职能部门评估记录: {supplier_name} - {evaluation.evaluator_name}")
+                print(f"成功导入职能部门评估记录: {supplier_name}({service_area}) - {evaluation.evaluator_name}")
 
             except Exception as e:
                 print(f"处理职能部门数据时出错: {str(e)}")
                 continue
+
+    # ... 其余方法保持不变 ...
 
     def _extract_property_scores(self, row) -> Dict[str, float]:
         """提取物管处评分"""
@@ -122,7 +129,6 @@ class ExcelProcessor:
                 value = row[col_name]
                 if pd.notna(value):
                     try:
-                        # 确保转换为float
                         scores[key] = float(value)
                     except:
                         print(f"警告: 无法转换评分 {col_name}: {value}")
@@ -182,19 +188,56 @@ class ExcelProcessor:
         """提取反馈信息"""
         feedback = {}
 
-        # 物管处反馈字段
-        feedback_fields = {
-            'positive_case': ['优秀案例： 请您列举该供应商在服务过程中，令您印象深刻的优点或特别优秀的具体事例（请尽量具体描述事件、时间和影响）。'],
-            'positive_description': ['您对于供应商优秀事项的描述：', '您的描述：'],
-            'negative_case': ['问题案例： 请您列举该供应商在服务过程中，您认为需要改进的方面或遇到的具体问题（请尽量具体描述事件、时间和影响）。'],
-            'negative_description': ['您对于供应商问题案例的描述：'],
-            'suggestions': ['改进建议 您对该供应商的服务有哪些具体的改进建议？或者对本次评估体系有什么意见？', '改进建议： 您对该供应商的服务或有哪些具体的改进建议？']
+        # 调试信息
+        # print(f"提取反馈，列名: {list(row.index)}")
+
+        # 物管处反馈字段映射
+        property_feedback_map = {
+            '优秀案例： 请您列举该供应商在服务过程中，令您印象深刻的优点或特别优秀的具体事例（请尽量具体描述事件、时间和影响）。': 'positive_case',
+            '您对于供应商优秀事项的描述：': 'positive_description',
+            '问题案例： 请您列举该供应商在服务过程中，您认为需要改进的方面或遇到的具体问题（请尽量具体描述事件、时间和影响）。': 'negative_case',
+            '您对于供应商问题案例的描述：': 'negative_description',
+            '改进建议 您对该供应商的服务有哪些具体的改进建议？或者对本次评估体系有什么意见？': 'suggestions'
         }
 
-        for key, possible_columns in feedback_fields.items():
-            for col in possible_columns:
-                if col in row and pd.notna(row[col]):
-                    feedback[key] = str(row[col])
-                    break
+        # 职能部门反馈字段映射
+        functional_feedback_map = {
+            '优秀案例： 请您列举该供应商在与本部门协作过程中，令您印象深刻的优点或特别优秀的具体事例（请尽量具体描述事件、时间和影响）。': 'positive_case',
+            '您的描述：': 'positive_description',  # 这可能是优秀案例的描述
+            '问题案例： 请您列举该供应商在与本部门协作过程中，您认为需要改进的方面或遇到的具体问题（请尽量具体描述事件、时间和影响）。': 'negative_case',
+            '改进建议： 您对该供应商的服务或有哪些具体的改进建议？': 'suggestions'
+        }
+
+        # 尝试两种映射
+        for col_name in row.index:
+            # 尝试物管处映射
+            if col_name in property_feedback_map:
+                key = property_feedback_map[col_name]
+                if pd.notna(row[col_name]) and str(row[col_name]).strip():
+                    feedback[key] = str(row[col_name]).strip()
+
+            # 尝试职能部门映射
+            elif col_name in functional_feedback_map:
+                key = functional_feedback_map[col_name]
+                if pd.notna(row[col_name]) and str(row[col_name]).strip():
+                    feedback[key] = str(row[col_name]).strip()
+
+            # 处理"您的描述"字段（可能对应不同的内容）
+            elif '您的描述' in col_name:
+                if pd.notna(row[col_name]) and str(row[col_name]).strip():
+                    # 根据上下文判断是正面还是负面描述
+                    # 这里简单处理，如果已有positive_case但无positive_description，则认为是正面描述
+                    if 'positive_case' in feedback and 'positive_description' not in feedback:
+                        feedback['positive_description'] = str(row[col_name]).strip()
+                    elif 'negative_case' in feedback and 'negative_description' not in feedback:
+                        feedback['negative_description'] = str(row[col_name]).strip()
+                    else:
+                        # 默认作为正面描述
+                        feedback['positive_description'] = str(row[col_name]).strip()
+
+        # 调试信息
+        # if feedback:
+        #     print(f"提取到的反馈: {list(feedback.keys())}")
 
         return feedback
+

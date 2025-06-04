@@ -2,7 +2,8 @@
 import os
 import json
 from datetime import datetime
-from typing import Dict, List
+from typing import Dict, List, Tuple
+from collections import defaultdict
 
 from database.db_manager import DatabaseManager
 from data_processing.questionnaire_parser import QuestionnaireParser
@@ -56,7 +57,7 @@ class SupplierEvaluationSystem:
 
         print("数据导入完成")
 
-    def analyze_supplier(self, supplier_name: str) -> Dict:
+    def analyze_supplier(self, supplier_name: str, service_area: str = None) -> Dict:
         """分析单个供应商"""
         print(f"\n正在分析供应商: {supplier_name}")
 
@@ -66,6 +67,10 @@ class SupplierEvaluationSystem:
         if not evaluations:
             print(f"警告: 未找到供应商 {supplier_name} 的评估数据")
             return None
+
+        # 从评估数据中获取服务地区
+        if not service_area and evaluations:
+            service_area = evaluations[0].get('service_area', '未知')
 
         # 计算维度得分
         dimension_scores = self.score_calculator.calculate_dimension_scores(evaluations)
@@ -78,18 +83,36 @@ class SupplierEvaluationSystem:
         functional_score = 0
 
         if dimension_scores['property']:
-            property_total = sum(
-                score * self.config.DIMENSION_WEIGHTS['property'].get(dim, 0)
-                for dim, score in dimension_scores['property'].items()
-            )
-            property_score = (property_total / 5) * 100
+            # 计算物管处的加权平均分
+            weighted_sum = 0
+            weight_sum = 0
+
+            for dim, score in dimension_scores['property'].items():
+                if dim in self.config.DIMENSION_WEIGHTS['property']:
+                    dim_weight = self.config.DIMENSION_WEIGHTS['property'][dim]
+                    weighted_sum += score * dim_weight
+                    weight_sum += dim_weight
+
+            if weight_sum > 0:
+                property_score = (weighted_sum / weight_sum / 5) * 100
+
+            print(f"物管处得分: {property_score:.2f}")
 
         if dimension_scores['functional']:
-            functional_total = sum(
-                score * self.config.DIMENSION_WEIGHTS['functional'].get(dim, 0)
-                for dim, score in dimension_scores['functional'].items()
-            )
-            functional_score = (functional_total / 5) * 100
+            # 计算职能部门的加权平均分
+            weighted_sum = 0
+            weight_sum = 0
+
+            for dim, score in dimension_scores['functional'].items():
+                if dim in self.config.DIMENSION_WEIGHTS['functional']:
+                    dim_weight = self.config.DIMENSION_WEIGHTS['functional'][dim]
+                    weighted_sum += score * dim_weight
+                    weight_sum += dim_weight
+
+            if weight_sum > 0:
+                functional_score = (weighted_sum / weight_sum / 5) * 100
+
+            print(f"职能部门得分: {functional_score:.2f}")
 
         # 收集反馈信息
         positive_feedbacks = []
@@ -125,6 +148,7 @@ class SupplierEvaluationSystem:
 
         analysis_result = {
             'supplier_name': supplier_name,
+            'service_area': service_area,
             'total_score': total_score,
             'property_score': property_score,
             'functional_score': functional_score,
@@ -137,7 +161,7 @@ class SupplierEvaluationSystem:
             'evaluation_count': len(evaluations)
         }
 
-        print(f"供应商 {supplier_name} 分析完成，综合得分: {total_score:.2f}")
+        print(f"供应商 {supplier_name}({service_area}) 分析完成，综合得分: {total_score:.2f}")
 
         return analysis_result
 
@@ -146,30 +170,55 @@ class SupplierEvaluationSystem:
         print("\n开始生成供应商评估报告...")
 
         # 获取所有供应商
-        suppliers = self.db_manager.get_all_suppliers()
+        suppliers_with_area = self.db_manager.get_all_suppliers()
 
-        if not suppliers:
+        if not suppliers_with_area:
             print("错误: 数据库中没有供应商数据")
             return
 
         # 分析所有供应商
         all_results = {}
-        for supplier in suppliers:
-            result = self.analyze_supplier(supplier)
-            if result:
-                all_results[supplier] = result
+        results_by_area = defaultdict(dict)
 
-        # 计算排名
+        for supplier_name, service_area in suppliers_with_area:
+            result = self.analyze_supplier(supplier_name, service_area)
+            if result:
+                all_results[supplier_name] = result
+                results_by_area[service_area][supplier_name] = result
+
+        # 计算总排名
         supplier_scores = {
             supplier: result['total_score']
             for supplier, result in all_results.items()
         }
-        rankings = self.score_calculator.rank_suppliers(supplier_scores)
+        total_rankings = self.score_calculator.rank_suppliers(supplier_scores)
+
+        # 计算分地区排名
+        rankings_by_area = {}
+        for area, area_results in results_by_area.items():
+            area_scores = {
+                supplier: result['total_score']
+                for supplier, result in area_results.items()
+            }
+            area_rankings = self.score_calculator.rank_suppliers(area_scores)
+            rankings_by_area[area] = area_rankings
 
         # 为每个供应商生成详细报告
-        for supplier, score, rank in rankings:
+        for supplier, score, rank in total_rankings:
             if supplier in all_results:
+                # 获取供应商的服务地区
+                service_area = all_results[supplier]['service_area']
+
+                # 找到地区内排名
+                area_rank = None
+                if service_area in rankings_by_area:
+                    for s, _, r in rankings_by_area[service_area]:
+                        if s == supplier:
+                            area_rank = r
+                            break
+
                 all_results[supplier]['rank'] = rank
+                all_results[supplier]['area_rank'] = area_rank
 
                 # 生成PDF报告
                 report_path = os.path.join(
@@ -185,22 +234,50 @@ class SupplierEvaluationSystem:
 
                 print(f"已生成报告: {report_path}")
 
-        # 生成汇总排名报告
+        # 生成分地区汇总排名报告
         summary_path = os.path.join(
             self.config.REPORTS_DIR,
             f'供应商评估汇总报告_{datetime.now().strftime("%Y%m%d")}.pdf'
         )
 
-        self.report_generator.generate_summary_report(rankings, summary_path)
+        # 准备带地区信息的排名数据
+        total_rankings_with_area = []
+        for supplier, score, rank in total_rankings:
+            service_area = all_results[supplier]['service_area']
+            total_rankings_with_area.append(((supplier, service_area), score, rank))
+
+        # 准备分地区排名数据
+        rankings_by_area_with_info = {}
+        for area, rankings in rankings_by_area.items():
+            area_rankings_with_info = []
+            for supplier, score, rank in rankings:
+                area_rankings_with_info.append(((supplier, area), score, rank))
+            rankings_by_area_with_info[area] = area_rankings_with_info
+
+        self.report_generator.generate_summary_report_by_area(
+            rankings_by_area_with_info,
+            total_rankings_with_area,
+            summary_path
+        )
         print(f"\n已生成汇总报告: {summary_path}")
 
         # 打印排名结果
-        print("\n=== 供应商综合排名 ===")
-        print(f"{'排名':<5} {'供应商名称':<30} {'综合得分':<10} {'评级':<10}")
-        print("-" * 60)
-        for supplier, score, rank in rankings:
+        print("\n=== 供应商综合排名（所有地区） ===")
+        print(f"{'排名':<5} {'供应商名称':<30} {'服务地区':<10} {'综合得分':<10} {'评级':<10}")
+        print("-" * 70)
+        for supplier, score, rank in total_rankings:
             level = self.score_calculator.get_score_level(score)
-            print(f"{rank:<5} {supplier:<30} {score:<10.2f} {level:<10}")
+            service_area = all_results[supplier]['service_area']
+            print(f"{rank:<5} {supplier:<30} {service_area:<10} {score:<10.2f} {level:<10}")
+
+        # 打印分地区排名
+        for area, rankings in rankings_by_area.items():
+            print(f"\n=== {area}供应商排名 ===")
+            print(f"{'地区排名':<8} {'供应商名称':<30} {'综合得分':<10} {'评级':<10}")
+            print("-" * 60)
+            for supplier, score, rank in rankings:
+                level = self.score_calculator.get_score_level(score)
+                print(f"{rank:<8} {supplier:<30} {score:<10.2f} {level:<10}")
 
     def run(self):
         """运行主程序"""
@@ -221,13 +298,76 @@ class SupplierEvaluationSystem:
             print(f"  - 物管处数据: {property_excel}")
             print(f"  - 职能部门数据: {functional_excel}")
             return
-
+        self.test_database_content()
         # 3. 生成所有报告
         self.generate_all_reports()
 
         print(f"\n处理完成! 结束时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         print(f"报告输出目录: {self.config.REPORTS_DIR}")
         print(f"图表输出目录: {self.config.CHARTS_DIR}")
+
+    def test_database_content(self):
+        """测试数据库内容"""
+        print("\n=== 测试数据库内容 ===")
+
+        # 直接查询数据库
+        with self.db_manager._get_connection() as conn:
+            cursor = conn.cursor()
+
+            # 查询所有评估记录
+            cursor.execute('''
+                SELECT e.*, s.name as supplier_name
+                FROM evaluations e
+                JOIN suppliers s ON e.supplier_id = s.id
+                ORDER BY s.name, e.evaluation_type
+            ''')
+
+            all_records = cursor.fetchall()
+            print(f"\n数据库中总评估记录数: {len(all_records)}")
+
+            # 按供应商和类型统计
+            supplier_stats = {}
+            for record in all_records:
+                supplier = record['supplier_name']
+                eval_type = record['evaluation_type']
+
+                if supplier not in supplier_stats:
+                    supplier_stats[supplier] = {'property': 0, 'functional': 0}
+
+                supplier_stats[supplier][eval_type] += 1
+
+            print("\n各供应商评估记录统计:")
+            for supplier, stats in supplier_stats.items():
+                print(f"  {supplier}:")
+                print(f"    物管处评估: {stats['property']} 条")
+                print(f"    职能部门评估: {stats['functional']} 条")
+
+            # 查看一个供应商的详细数据
+            if supplier_stats:
+                test_supplier = list(supplier_stats.keys())[0]
+                print(f"\n查看 {test_supplier} 的详细评估数据:")
+
+                cursor.execute('''
+                    SELECT * FROM evaluations e
+                    JOIN suppliers s ON e.supplier_id = s.id
+                    WHERE s.name = ?
+                ''', (test_supplier,))
+
+                for i, record in enumerate(cursor.fetchall()):
+                    print(f"\n  记录 {i+1}:")
+                    print(f"    类型: {record['evaluation_type']}")
+                    print(f"    评估人: {record['evaluator_name']}")
+                    print(f"    部门: {record['evaluator_dept']}")
+
+                    # 解析scores
+                    try:
+                        scores = json.loads(record['scores'])
+                        print(f"    评分数: {len(scores)}")
+                        if scores:
+                            print(f"    评分示例: {list(scores.items())[:3]}")
+                    except:
+                        print(f"    评分解析失败")
+
 
 def main():
     """主函数"""

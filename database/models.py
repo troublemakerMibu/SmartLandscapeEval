@@ -8,6 +8,7 @@ class Supplier:
     """供应商信息"""
     id: Optional[int] = None
     name: str = ""
+    service_area: str = ""  # 新增：服务地区（市内/市外）
     created_at: Optional[datetime] = None
 
 @dataclass
