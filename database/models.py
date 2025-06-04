@@ -8,7 +8,7 @@ class Supplier:
     """供应商信息"""
     id: Optional[int] = None
     name: str = ""
-    service_area: str = ""  # 新增：服务地区（市内/市外）
+    service_area: str = ""
     created_at: Optional[datetime] = None
 
 @dataclass
@@ -32,3 +32,13 @@ class EvaluationDimension:
     name: str = ""
     type: str = ""  # 'property' 或 'functional'
     weight: float = 0.0
+
+@dataclass
+class SupplierService:
+    """供应商服务情况"""
+    id: Optional[int] = None
+    supplier_id: int = 0
+    project_count: int = 0
+    project_names: str = ""  # 项目名称列表，逗号分隔
+    project_ratio: float = 0.0  # 项目占比
+    remarks: str = ""  # 备注

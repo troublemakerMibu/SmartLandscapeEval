@@ -4,7 +4,7 @@ import json
 from datetime import datetime
 from typing import Dict, List, Tuple
 from collections import defaultdict
-
+from data_processing.service_info_processor import ServiceInfoProcessor
 from database.db_manager import DatabaseManager
 from data_processing.questionnaire_parser import QuestionnaireParser
 from data_processing.excel_processor import ExcelProcessor
@@ -24,6 +24,7 @@ class SupplierEvaluationSystem:
         self.radar_generator = RadarChartGenerator()
         self.wordcloud_generator = WordCloudGenerator()
         self.report_generator = ReportGenerator()
+        self.service_info_processor = ServiceInfoProcessor(self.db_manager)
 
     def load_questionnaires(self, property_json_path: str, functional_json_path: str):
         """加载问卷JSON文件"""
@@ -165,6 +166,13 @@ class SupplierEvaluationSystem:
 
         return analysis_result
 
+    def import_service_info(self, excel_path: str):
+        """导入供应商服务情况"""
+        if os.path.exists(excel_path):
+            self.service_info_processor.import_service_info(excel_path)
+        else:
+            print(f"警告: 未找到服务情况文件 {excel_path}")
+
     def generate_all_reports(self):
         """生成所有供应商报告"""
         print("\n开始生成供应商评估报告...")
@@ -219,20 +227,20 @@ class SupplierEvaluationSystem:
 
                 all_results[supplier]['rank'] = rank
                 all_results[supplier]['area_rank'] = area_rank
+                if Config.GENERATE_REPORTS_MODE == 'ALL' or Config.GENERATE_REPORTS_MODE  == 'SUPPLIER_ONLY':
+                    # 生成PDF报告
+                    report_path = os.path.join(
+                        self.config.REPORTS_DIR,
+                        f'{supplier}_评估报告_{datetime.now().strftime("%Y%m%d")}.pdf'
+                    )
+                    print(f'开始生成供应商：{supplier}评估报告')
+                    self.report_generator.generate_supplier_report(
+                        supplier,
+                        all_results[supplier],
+                        report_path
+                    )
 
-                # 生成PDF报告
-                report_path = os.path.join(
-                    self.config.REPORTS_DIR,
-                    f'{supplier}_评估报告_{datetime.now().strftime("%Y%m%d")}.pdf'
-                )
-                print(f'开始生成供应商：{supplier}评估报告')
-                self.report_generator.generate_supplier_report(
-                    supplier,
-                    all_results[supplier],
-                    report_path
-                )
-
-                print(f"已生成报告: {report_path}")
+                    print(f"已生成报告: {report_path}")
 
         # 生成分地区汇总排名报告
         summary_path = os.path.join(
@@ -253,13 +261,14 @@ class SupplierEvaluationSystem:
             for supplier, score, rank in rankings:
                 area_rankings_with_info.append(((supplier, area), score, rank))
             rankings_by_area_with_info[area] = area_rankings_with_info
-
-        self.report_generator.generate_summary_report_by_area(
-            rankings_by_area_with_info,
-            total_rankings_with_area,
-            summary_path
-        )
-        print(f"\n已生成汇总报告: {summary_path}")
+        if Config.GENERATE_REPORTS_MODE == 'ALL' or Config.GENERATE_REPORTS_MODE  == 'SUMMARY_ONLY':
+            self.report_generator.generate_summary_report_by_area(
+                rankings_by_area_with_info,
+                total_rankings_with_area,
+                summary_path,
+                db_manager=self.db_manager  # 传递数据库管理器
+            )
+            print(f"\n已生成汇总报告: {summary_path}")
 
         # 打印排名结果
         print("\n=== 供应商综合排名（所有地区） ===")
@@ -287,17 +296,23 @@ class SupplierEvaluationSystem:
         # # 1. 加载问卷配置（如果有JSON文件）
         # # self.load_questionnaires('property_questionnaire.json', 'functional_questionnaire.json')
         #
-        # # 2. 导入Excel数据
-        # property_excel = os.path.join(self.config.DATA_DIR, 'property_evaluation.xlsx')
-        # functional_excel = os.path.join(self.config.DATA_DIR, 'functional_evaluation.xlsx')
-        #
-        # if os.path.exists(property_excel) or os.path.exists(functional_excel):
-        #     self.import_excel_data(property_excel, functional_excel)
-        # else:
-        #     print("提示: 请将Excel文件放置在data目录下")
-        #     print(f"  - 物管处数据: {property_excel}")
-        #     print(f"  - 职能部门数据: {functional_excel}")
-        #     return
+        if Config.IMPORT_DATA:
+            # 2. 导入Excel数据
+
+            property_excel = os.path.join(self.config.DATA_DIR, 'property_evaluation.xlsx')
+            functional_excel = os.path.join(self.config.DATA_DIR, 'functional_evaluation.xlsx')
+
+            if os.path.exists(property_excel) or os.path.exists(functional_excel):
+                self.import_excel_data(property_excel, functional_excel)
+            service_info_excel = os.path.join(self.config.DATA_DIR, '绿化外包供应商服务情况一览表.xlsx')
+            if os.path.exists(service_info_excel):
+                self.import_service_info(service_info_excel)
+            else:
+                print("提示: 请将Excel文件放置在data目录下")
+                print(f"  - 物管处数据: {property_excel}")
+                print(f"  - 职能部门数据: {functional_excel}")
+                print(f"  - 供应商服务情况一览表: {service_info_excel}")
+                return
         self.test_database_content()
         # 3. 生成所有报告
         self.generate_all_reports()

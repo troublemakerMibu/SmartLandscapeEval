@@ -267,7 +267,9 @@ class ReportGenerator:
             self._generate_matplotlib_report(supplier_name, analysis_data, output_path)
 
     def generate_summary_report_by_area(self, rankings_by_area: Dict[str, List[Tuple[str, float, int]]],
-                                        total_rankings: List[Tuple[str, float, int]], output_path: str):
+                                        total_rankings: List[Tuple[str, float, int]],
+                                        output_path: str,
+                                        db_manager=None):
         """生成按地区分类的汇总排名报告"""
         try:
             doc = SimpleDocTemplate(output_path, pagesize=A4)
@@ -280,16 +282,44 @@ class ReportGenerator:
                                    self.styles['ChineseNormal']))
             story.append(Spacer(1, 0.5 * inch))
 
-            # 总体排名
+            # 获取供应商服务信息
+            service_info_dict = {}
+            if db_manager:
+                all_services = db_manager.get_all_supplier_services()
+                for service in all_services:
+                    if service['name']:
+                        service_info_dict[service['name']] = service
+
+            # 总体排名（保持原有表格，因为只显示项目数）
             story.append(Paragraph("一、供应商综合排名（所有地区）", self.styles['ChineseHeading']))
 
-            ranking_data = [['排名', '供应商名称', '服务地区', '综合得分', '评级']]
-            for supplier_info, score, rank in total_rankings:
-                supplier_name, service_area = supplier_info
-                level = self._get_score_level(score)
-                ranking_data.append([str(rank), supplier_name, service_area, f"{score:.2f}", level])
+            ranking_data = [['排名', '供应商名称', '服务地区', '项目数', '综合得分', '评级']]
 
-            ranking_table = Table(ranking_data, colWidths=[0.8 * inch, 2.5 * inch, 1 * inch, 1.2 * inch, 1 * inch])
+            for supplier_info, score, rank in total_rankings:
+                if isinstance(supplier_info, tuple):
+                    supplier_name, service_area = supplier_info
+                else:
+                    supplier_name = supplier_info
+                    service_area = '未知'
+
+                level = self._get_score_level(score)
+
+                # 获取项目数量
+                project_count = 0
+                if supplier_name in service_info_dict:
+                    project_count = service_info_dict[supplier_name].get('project_count', 0)
+
+                ranking_data.append([
+                    str(rank),
+                    supplier_name,
+                    service_area,
+                    str(project_count),
+                    f"{score:.2f}",
+                    level
+                ])
+
+            ranking_table = Table(ranking_data,
+                                  colWidths=[0.6 * inch, 2.3 * inch, 0.8 * inch, 0.8 * inch, 1 * inch, 0.8 * inch])
 
             # 设置表格样式
             table_style = [
@@ -297,8 +327,8 @@ class ReportGenerator:
                 ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
                 ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
                 ('FONTNAME', (0, 0), (-1, -1), self.chinese_font),
-                ('FONTSIZE', (0, 0), (-1, -1), 11),
-                ('BOTTOMPADDING', (0, 0), (-1, -1), 10),
+                ('FONTSIZE', (0, 0), (-1, -1), 10),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
                 ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
                 ('GRID', (0, 0), (-1, -1), 1, colors.black),
             ]
@@ -315,29 +345,172 @@ class ReportGenerator:
             story.append(ranking_table)
             story.append(PageBreak())
 
-            # 分地区排名
-            for area, rankings in rankings_by_area.items():
-                story.append(Paragraph(f"二、{area}供应商排名", self.styles['ChineseHeading']))
+            # 添加详细服务信息页（修改这部分以支持自动换行）
+            story.append(Paragraph("二、供应商服务项目详情", self.styles['ChineseHeading']))
 
-                area_data = [['地区排名', '供应商名称', '综合得分', '评级', '总排名']]
-                for supplier_info, score, area_rank in rankings:
+            # 创建一个专门用于表格单元格的样式（较小的字体和行距）
+            cell_style = ParagraphStyle(
+                'TableCell',
+                parent=self.styles['ChineseNormal'],
+                fontName=self.chinese_font,
+                fontSize=10,
+                leading=12,  # 行距
+                alignment=0,  # 左对齐
+                wordWrap='CJK'
+            )
+
+            # 按排名顺序显示每个供应商的详细项目信息
+            for supplier_info, score, rank in total_rankings[:10]:  # 只显示前10名的详细信息
+                if isinstance(supplier_info, tuple):
                     supplier_name, _ = supplier_info
+                else:
+                    supplier_name = supplier_info
+
+                if supplier_name in service_info_dict:
+                    service = service_info_dict[supplier_name]
+
+                    story.append(Paragraph(f"<b>{rank}. {supplier_name}</b>", self.styles['ChineseNormal']))
+
+                    # 处理项目名称，将其包装在Paragraph中以支持自动换行
+                    project_names = service.get('project_names', '')
+                    # 将项目名称转换为Paragraph对象
+                    project_names_para = Paragraph(project_names, cell_style)
+
+                    # 创建详细信息表
+                    detail_data = [
+                        ['项目数量', str(service.get('project_count', 0))],
+                        ['项目占比', f"{service.get('project_ratio', 0) * 100:.2f}%"],
+                        ['服务项目', project_names_para]  # 使用Paragraph对象
+                    ]
+
+                    if service.get('remarks'):
+                        remarks_para = Paragraph(service.get('remarks', ''), cell_style)
+                        detail_data.append(['备注', remarks_para])
+
+                    # 设置表格列宽，给项目名称更多空间
+                    detail_table = Table(detail_data, colWidths=[1.2 * inch, 5.3 * inch])
+
+                    detail_table.setStyle(TableStyle([
+                        ('ALIGN', (0, 0), (0, -1), 'RIGHT'),  # 第一列右对齐
+                        ('ALIGN', (1, 0), (1, -1), 'LEFT'),  # 第二列左对齐
+                        ('FONTNAME', (0, 0), (-1, -1), self.chinese_font),
+                        ('FONTSIZE', (0, 0), (-1, -1), 10),
+                        ('BACKGROUND', (0, 0), (0, -1), colors.lightgrey),
+                        ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+                        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+                        ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+                        ('TOPPADDING', (0, 0), (-1, -1), 6),
+                        ('LEFTPADDING', (0, 0), (-1, -1), 8),
+                        ('RIGHTPADDING', (0, 0), (-1, -1), 8),
+                    ]))
+
+                    story.append(detail_table)
+                    story.append(Spacer(1, 0.3 * inch))
+
+            # 添加项目分布统计
+            story.append(PageBreak())
+            story.append(Paragraph("三、项目分布统计", self.styles['ChineseHeading']))
+
+            # 创建项目分布统计表
+            total_projects = sum(service_info_dict.get(name, {}).get('project_count', 0)
+                                 for (name, _), _, _ in total_rankings
+                                 if isinstance(name, tuple) or name in service_info_dict)
+
+            if total_projects > 0:
+                distribution_data = [['供应商名称', '项目数量', '占比', '累计占比']]
+                cumulative_ratio = 0
+
+                for supplier_info, score, rank in total_rankings:
+                    if isinstance(supplier_info, tuple):
+                        supplier_name, _ = supplier_info
+                    else:
+                        supplier_name = supplier_info
+
+                    if supplier_name in service_info_dict:
+                        project_count = service_info_dict[supplier_name].get('project_count', 0)
+                        if project_count > 0:
+                            ratio = service_info_dict[supplier_name].get('project_ratio', 0)
+                            cumulative_ratio += ratio
+
+                            # 使用Paragraph包装供应商名称
+                            supplier_name_para = Paragraph(supplier_name, cell_style)
+
+                            distribution_data.append([
+                                supplier_name_para,
+                                str(project_count),
+                                f"{ratio * 100:.2f}%",
+                                f"{cumulative_ratio * 100:.2f}%"
+                            ])
+
+                distribution_table = Table(distribution_data,
+                                           colWidths=[3 * inch, 1.2 * inch, 1.2 * inch, 1.2 * inch])
+
+                distribution_table.setStyle(TableStyle([
+                    ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
+                    ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                    ('ALIGN', (0, 0), (0, 0), 'CENTER'),
+                    ('ALIGN', (1, 0), (-1, -1), 'CENTER'),
+                    ('ALIGN', (0, 1), (0, -1), 'LEFT'),
+                    ('FONTNAME', (0, 0), (-1, -1), self.chinese_font),
+                    ('FONTSIZE', (0, 0), (-1, -1), 10),
+                    ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
+                    ('TOPPADDING', (0, 0), (-1, -1), 8),
+                    ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+                    ('GRID', (0, 0), (-1, -1), 1, colors.black),
+                    ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                ]))
+
+                story.append(distribution_table)
+
+            story.append(PageBreak())
+
+            # 分地区排名（保持原有逻辑）
+            area_index = 4  # 从四开始编号
+            for area, rankings in rankings_by_area.items():
+                story.append(Paragraph(f"{area_index}、{area}供应商排名",
+                                       self.styles['ChineseHeading']))
+                area_index += 1
+
+                area_data = [['地区排名', '供应商名称', '项目数', '综合得分', '评级', '总排名']]
+
+                for supplier_info, score, area_rank in rankings:
+                    if isinstance(supplier_info, tuple):
+                        supplier_name, _ = supplier_info
+                    else:
+                        supplier_name = supplier_info
+
                     level = self._get_score_level(score)
+
                     # 找到总排名
                     total_rank = next((rank for (name, _), _, rank in total_rankings
-                                       if name == supplier_name), 'N/A')
-                    area_data.append([str(area_rank), supplier_name, f"{score:.2f}",
-                                      level, f"第{total_rank}名"])
+                                       if
+                                       (isinstance(name, tuple) and name[0] == supplier_name) or name == supplier_name),
+                                      'N/A')
 
-                area_table = Table(area_data, colWidths=[1 * inch, 2.5 * inch, 1.2 * inch, 1 * inch, 1 * inch])
+                    # 获取项目数量
+                    project_count = 0
+                    if supplier_name in service_info_dict:
+                        project_count = service_info_dict[supplier_name].get('project_count', 0)
+
+                    area_data.append([
+                        str(area_rank),
+                        supplier_name,
+                        str(project_count),
+                        f"{score:.2f}",
+                        level,
+                        f"第{total_rank}名"
+                    ])
+
+                area_table = Table(area_data,
+                                   colWidths=[0.8 * inch, 2.2 * inch, 0.8 * inch, 1 * inch, 0.8 * inch, 0.8 * inch])
 
                 area_style = [
                     ('BACKGROUND', (0, 0), (-1, 0), colors.grey),
                     ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
                     ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
                     ('FONTNAME', (0, 0), (-1, -1), self.chinese_font),
-                    ('FONTSIZE', (0, 0), (-1, -1), 11),
-                    ('BOTTOMPADDING', (0, 0), (-1, -1), 10),
+                    ('FONTSIZE', (0, 0), (-1, -1), 10),
+                    ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
                     ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
                     ('GRID', (0, 0), (-1, -1), 1, colors.black),
                 ]
@@ -360,7 +533,10 @@ class ReportGenerator:
 
         except Exception as e:
             print(f"生成汇总报告时出错: {str(e)}")
+            import traceback
+            traceback.print_exc()
             self._generate_matplotlib_summary_by_area(rankings_by_area, total_rankings, output_path)
+
 
     def generate_summary_report(self, rankings: List[Tuple[str, float, int]],
                                 output_path: str):

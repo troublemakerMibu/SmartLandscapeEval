@@ -82,7 +82,6 @@ class ScoreCalculator:
 
         if sample_size < min_samples:
             # 样本量不足，施加惩罚
-            # 使用平方根函数，使惩罚更平滑
             # reliability = math.sqrt(sample_size / min_samples)
             reliability = sample_size / min_samples
             penalty = (1 - reliability) * self.sample_adjustment_config['max_penalty']
