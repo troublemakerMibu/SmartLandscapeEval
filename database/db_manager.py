@@ -161,7 +161,7 @@ class DatabaseManager:
             results = []
             rows = cursor.fetchall()
 
-            print(f"\\n从数据库获取供应商 {supplier_name} 的评估记录:")
+            print(f"\n从数据库获取供应商 {supplier_name} 的评估记录:")
             print(f"  供应商ID: {supplier_id}")
             print(f"  找到 {len(rows)} 条评估记录")
 

@@ -11,6 +11,7 @@ import os
 from datetime import datetime
 from typing import Dict, List, Tuple
 from LLMconfig import call_LLM
+from utils.config import Config
 
 class ReportGenerator:
     def __init__(self):
@@ -133,11 +134,29 @@ class ReportGenerator:
             # 物管处维度
             if 'property' in analysis_data['dimension_scores'] and analysis_data['dimension_scores']['property']:
                 story.append(Paragraph("2.1 物管处评估维度", self.styles['ChineseNormal']))
+
+                # 提取样本调整信息
+                sample_adjustment = analysis_data['dimension_scores']['property'].get('_sample_adjustment', {})
+                if sample_adjustment:
+                    adjustment_text = (f"样本量: {sample_adjustment.get('sample_size', 0)}, \n"+
+                                       f"可靠性: {sample_adjustment.get('reliability_score', 1.0):.2f}, \n"+
+                                       f"调整系数: {sample_adjustment.get('factor', 1.0):.2f}")
+                    story.append(Paragraph(f"({adjustment_text})", self.styles['ChineseNormal']))
+                    story.append(Spacer(1, 0.1 * inch))
+
                 property_dim_data = [['维度', '得分', '满分', '得分率']]
+
+                # 只处理维度分数，跳过元数据
                 for dim, score in analysis_data['dimension_scores']['property'].items():
-                    dim_name = self._get_dimension_name('property', dim)
-                    score_rate = (score / 5) * 100
-                    property_dim_data.append([dim_name, f"{score:.2f}", '5.00', f"{score_rate:.1f}%"])
+                    # 跳过元数据（以下划线开头的键）
+                    if dim.startswith('_'):
+                        continue
+
+                    # 确保score是数值而不是字典
+                    if isinstance(score, (int, float)):
+                        dim_name = self._get_dimension_name('property', dim)
+                        score_rate = (score / 5) * 100
+                        property_dim_data.append([dim_name, f"{score:.2f}", '5.00', f"{score_rate:.1f}%"])
 
                 property_table = Table(property_dim_data, colWidths=[2.5 * inch, 1.5 * inch, 1 * inch, 1.5 * inch])
                 property_table.setStyle(self._get_table_style())
@@ -147,11 +166,29 @@ class ReportGenerator:
             # 职能部门维度
             if 'functional' in analysis_data['dimension_scores'] and analysis_data['dimension_scores']['functional']:
                 story.append(Paragraph("2.2 职能部门评估维度", self.styles['ChineseNormal']))
+
+                # 提取样本调整信息
+                sample_adjustment = analysis_data['dimension_scores']['functional'].get('_sample_adjustment', {})
+                if sample_adjustment:
+                    adjustment_text = (f"样本量: {sample_adjustment.get('sample_size', 0)}, \n"+
+                                       f"可靠性: {sample_adjustment.get('reliability_score', 1.0):.2f}, \n"+
+                                       f"调整系数: {sample_adjustment.get('factor', 1.0):.2f}")
+                    story.append(Paragraph(f"({adjustment_text})", self.styles['ChineseNormal']))
+                    story.append(Spacer(1, 0.1 * inch))
+
                 functional_dim_data = [['维度', '得分', '满分', '得分率']]
+
+                # 只处理维度分数，跳过元数据
                 for dim, score in analysis_data['dimension_scores']['functional'].items():
-                    dim_name = self._get_dimension_name('functional', dim)
-                    score_rate = (score / 5) * 100
-                    functional_dim_data.append([dim_name, f"{score:.2f}", '5.00', f"{score_rate:.1f}%"])
+                    # 跳过元数据
+                    if dim.startswith('_'):
+                        continue
+
+                    # 确保score是数值而不是字典
+                    if isinstance(score, (int, float)):
+                        dim_name = self._get_dimension_name('functional', dim)
+                        score_rate = (score / 5) * 100
+                        functional_dim_data.append([dim_name, f"{score:.2f}", '5.00', f"{score_rate:.1f}%"])
 
                 functional_table = Table(functional_dim_data, colWidths=[2.5 * inch, 1.5 * inch, 1 * inch, 1.5 * inch])
                 functional_table.setStyle(self._get_table_style())
@@ -204,19 +241,21 @@ class ReportGenerator:
                 story.append(Paragraph("暂无问题反馈", self.styles['ChineseNormal']))
 
             story.append(Spacer(1, 0.3 * inch))
+            if Config.ENABLE_LLM:
+                # 调用大模型生成最终评价（使用特定格式）
+                feedback = self._generate_feedback(analysis_data)
+                story.append(Paragraph("4.3 综合评价", self.styles['ChineseHeading']))
 
-            # 调用大模型生成最终评价（使用特定格式）
-            feedback = self._generate_feedback(analysis_data)
-            story.append(Paragraph("4.3 综合评价", self.styles['ChineseHeading']))
+                # 将反馈文本按段落分割，每段都应用格式
+                paragraphs = feedback.split('\n\n') if '\n\n' in feedback else feedback.split('\n')
+                for para in paragraphs:
+                    if para.strip():  # 忽略空段落
+                        # 使用专门的LLM反馈样式
+                        story.append(Paragraph(para.strip(), self.styles['LLMFeedback']))
 
-            # 将反馈文本按段落分割，每段都应用格式
-            paragraphs = feedback.split('\n\n') if '\n\n' in feedback else feedback.split('\n')
-            for para in paragraphs:
-                if para.strip():  # 忽略空段落
-                    # 使用专门的LLM反馈样式
-                    story.append(Paragraph(para.strip(), self.styles['LLMFeedback']))
-
-            print('综合评价生成成功')
+                print('综合评价生成成功')
+            else:
+                print('跳过LLM生成综合评价')
 
             # 生成PDF
             doc.build(story)

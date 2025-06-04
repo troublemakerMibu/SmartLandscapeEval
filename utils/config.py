@@ -77,3 +77,13 @@ class Config:
         'c': -0.20,  # 严重
         'd': -0.30  # 极严重
     }
+    # 新增：样本量调整参数
+    SAMPLE_ADJUSTMENT_CONFIG = {
+            'enable': True,  # 是否启用样本量调整
+            'min_sample_size': 2,  # 最小样本量阈值
+            'optimal_sample_size': 8,  # 最优样本量
+            'max_penalty': 0.25,  # 最大惩罚系数（25%）
+            'max_bonus': 0.15  # 最大奖励系数（15%）
+        }
+    # 新增：是否启用LLM
+    ENABLE_LLM = True
