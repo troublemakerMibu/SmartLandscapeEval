@@ -710,13 +710,13 @@ class ReportGenerator:
 
     def _get_score_level(self, score: float) -> str:
         """获取分数等级"""
-        if score >= 80:
+        if score >= Config.SCORE_LEVEL['优秀']:
             return "优秀"
-        elif score >= 70:
+        elif score >= Config.SCORE_LEVEL['良好']:
             return "良好"
-        elif score >= 60:
+        elif score >= Config.SCORE_LEVEL['合格']:
             return "合格"
-        elif score >= 55:
+        elif score >= Config.SCORE_LEVEL['基本合格']:
             return "基本合格"
         else:
             return "不合格"

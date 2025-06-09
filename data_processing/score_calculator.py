@@ -49,82 +49,81 @@ class ScoreCalculator:
         return dimension_scores
 
     def _calculate_sample_adjustment(self, sample_size: int, scores: List[float]) -> Dict[str, float]:
-        """计算基于样本量的调整系数"""
-        if not self.sample_adjustment_config['enable']:
-            return {'factor': 1.0, 'confidence_interval': 0}
-
-        adjustment_info = {
+        cfg = self.sample_adjustment_config
+        info = {
             'sample_size': sample_size,
+            'method': cfg.get('method', 'linear'),
             'factor': 1.0,
-            'confidence_interval': 0,
-            'std_dev': 0,
-            'reliability_score': 1.0,
-            'cv': 0  # 变异系数
+            'raw_mean': None,
+            'std_dev': None,
+            'se': None,
+            'ci_lower': None,
+            'eb_shrunk': None,
+            'reliability_score': 1.0
         }
+        if not cfg['enable'] or sample_size == 0 or not scores:
+            return info
 
-        if sample_size == 0 or not scores:
-            return adjustment_info
-
-        # 1. 计算基本统计量
+        # 基本统计
+        mean_score = float(np.mean(scores))
+        info['raw_mean'] = mean_score
         if sample_size > 1:
-            mean_score = np.mean(scores)
-            std_dev = np.std(scores, ddof=1)  # 样本标准差
-            adjustment_info['std_dev'] = std_dev
+            std_dev = float(np.std(scores, ddof=1))
+            se = std_dev / math.sqrt(sample_size)
+            info['std_dev'] = std_dev
+            info['se'] = se
 
-            # 变异系数
-            if mean_score > 0:
-                cv = std_dev / mean_score
-                adjustment_info['cv'] = cv
+        method = cfg['method'].lower()
 
-        # 2. 计算可靠性分数（基于样本量）
-        min_samples = self.sample_adjustment_config['min_sample_size']
-        optimal_samples = self.sample_adjustment_config['optimal_sample_size']
+        if method == 'ci' and sample_size > 1:
+            # 1. 从表里取 z 值
+            alpha = cfg.get('confidence_level', 0.95)
+            z = cfg.get('z_table', {}).get(alpha, 1.96)
+            ci_lower = mean_score - z * info['se']
+            # 限制在 [1,5]
+            ci_lower = max(1.0, min(5.0, ci_lower))
+            info['ci_lower'] = ci_lower
+            # 用下限 / 均值 作为调整系数
+            info['factor'] = ci_lower / mean_score if mean_score > 0 else 1.0
+            # 简化的可靠性评分：样本数/(样本数+1)
+            info['reliability_score'] = sample_size / (sample_size + 1.0)
 
-        if sample_size < min_samples:
-            # 样本量不足，施加惩罚
-            # reliability = math.sqrt(sample_size / min_samples)
-            reliability = sample_size / min_samples
-            penalty = (1 - reliability) * self.sample_adjustment_config['max_penalty']
-            adjustment_info['factor'] = 1 - penalty
-            adjustment_info['reliability_score'] = reliability
-
-        elif sample_size < optimal_samples:
-            # 样本量适中，线性插值
-            progress = (sample_size - min_samples) / (optimal_samples - min_samples)
-            bonus = progress * self.sample_adjustment_config['max_bonus'] * 0.5  # 适中奖励
-            adjustment_info['factor'] = 1 + bonus
-            adjustment_info['reliability_score'] = 0.8 + 0.2 * progress
+        elif method == 'eb' and sample_size > 0:
+            # 收缩到全局先验 mean0
+            mean0 = cfg.get('eb_prior_mean', 3.0)
+            lam = cfg.get('eb_lambda', 5.0)
+            eb_shrunk = (sample_size * mean_score + lam * mean0) / (sample_size + lam)
+            info['eb_shrunk'] = eb_shrunk
+            info['factor'] = eb_shrunk / mean_score if mean_score > 0 else 1.0
+            # 可靠性评分：n/(n+λ)
+            info['reliability_score'] = sample_size / (sample_size + lam)
 
         else:
-            # 样本量充足，给予奖励但有上限20%
-            excess_ratio = math.log(1 + (sample_size - optimal_samples) / optimal_samples)
-            bonus = min(excess_ratio * 0.2, self.sample_adjustment_config['max_bonus'])
-            adjustment_info['factor'] = 1 + bonus
-            adjustment_info['reliability_score'] = 1.0
-
-        # 3. 考虑评分的一致性
-        if sample_size > 1 and adjustment_info['cv'] > 0:
-            # 变异系数越小，评分越一致，可靠性越高
-            # CV < 0.15: 非常一致
-            # CV < 0.3: 比较一致
-            # CV > 0.5: 差异较大
-
-            if adjustment_info['cv'] < 0.15:
-                consistency_bonus = 0.02
-            elif adjustment_info['cv'] < 0.3:
-                consistency_bonus = 0.01
-            elif adjustment_info['cv'] > 0.5:
-                consistency_bonus = -0.02
+            # fallback 到“linear”原实现
+            min_n = cfg['min_sample_size']
+            opt_n = cfg['optimal_sample_size']
+            if sample_size < min_n:
+                rel = sample_size / min_n
+                penalty = (1 - rel) * cfg['max_penalty']
+                info['factor'] = 1 - penalty
+                info['reliability_score'] = rel
+            elif sample_size < opt_n:
+                prog = (sample_size - min_n) / (opt_n - min_n)
+                bonus = prog * cfg['max_bonus'] * 0.5
+                info['factor'] = 1 + bonus
+                info['reliability_score'] = 0.8 + 0.2 * prog
             else:
-                consistency_bonus = 0
+                excess = math.log(1 + (sample_size - opt_n) / opt_n)
+                bonus = min(excess * 0.2, cfg['max_bonus'])
+                info['factor'] = 1 + bonus
+                info['reliability_score'] = 1.0
 
-            # 应用一致性调整
-            adjustment_info['factor'] = max(0.9, min(1.1,
-                adjustment_info['factor'] + consistency_bonus))
-
-        return adjustment_info
+        # 限制 factor 在 [0.5,1.5] 之内，防止过度
+        info['factor'] = max(0.5, min(1.5, info['factor']))
+        return info
 
     def _calculate_property_dimensions(self, evaluations: List[Dict]) -> Dict[str, float]:
+        cfg = self.sample_adjustment_config
         """计算物管处维度得分（处理租摆服务特殊规则）"""
         if not evaluations:
             return {}
@@ -218,16 +217,50 @@ class ScoreCalculator:
 
         print(f"\n  样本量分析:")
         print(f"    样本数: {sample_adjustment['sample_size']}")
-        print(f"    标准差: {sample_adjustment['std_dev']:.3f}")
-        print(f"    变异系数: {sample_adjustment['cv']:.3f}")
-        print(f"    可靠性: {sample_adjustment['reliability_score']:.3f}")
-        print(f"    调整系数: {sample_adjustment['factor']:.3f}")
+        if sample_adjustment['method'] == 'ci':
+            sa = sample_adjustment
+            ci_lower = sa.get('ci_lower')
+            factor = sa.get('factor', 1.0)
+            # 给一个占位符，当 ci_lower=None 时显示为 “—” 或 “N/A”
+            ci_lower_str = f"{ci_lower:.2f}" if ci_lower is not None else "—"
+            factor_str = f"{factor:.3f}"
+            print(f"    方法=CI 下限, 下限分={ci_lower_str}, 调整系数={factor_str}")
+        elif sample_adjustment['method'] == 'eb':
+            print(
+                f"    方法=EB 收缩, 收缩后均值={sample_adjustment['eb_shrunk']:.2f}, 调整系数={sample_adjustment['factor']:.3f}")
+        else:
+            print(f"    方法=Linear 线性, 调整系数={sample_adjustment['factor']:.3f}")
 
-        # 说明调整原因
-        if sample_adjustment['factor'] < 1.0:
-            print(f"    说明: 样本量较少，评分可靠性降低，施加{(1-sample_adjustment['factor'])*100:.1f}%惩罚")
-        elif sample_adjustment['factor'] > 1.0:
-            print(f"    说明: 样本量充足且评分一致，给予{(sample_adjustment['factor']-1)*100:.1f}%奖励")
+        method = sample_adjustment['method']
+        factor = sample_adjustment['factor']
+
+        if method == 'ci':
+            # CI 下限法
+            if factor < 1.0:
+                pct = (1 - factor) * 100
+                print(
+                    f"    说明: 基于{cfg['confidence_level'] * 100:.0f}%置信水平的CI下限低于均值，样本量不足，施加{pct:.1f}%惩罚")
+            else:
+                pct = (factor - 1) * 100
+                print(f"    说明: CI下限接近或高于均值，样本较可靠，给予{pct:.1f}%奖励")
+        elif method == 'eb':
+            # EB 收缩法
+            if factor < 1.0:
+                pct = (1 - factor) * 100
+                print(f"    说明: EB收缩后均值低于原均值，向全局先验收缩，施加{pct:.1f}%惩罚")
+            else:
+                pct = (factor - 1) * 100
+                print(f"    说明: EB收缩后均值高于原均值，向全局先验收缩，给予{pct:.1f}%奖励")
+        else:
+            # Linear 原逻辑
+            if factor < 1.0:
+                pct = (1 - factor) * 100
+                print(f"    说明: 样本量较少，评分可靠性降低，施加{pct:.1f}%惩罚")
+            elif factor > 1.0:
+                pct = (factor - 1) * 100
+                print(f"    说明: 样本量充足且评分一致，给予{pct:.1f}%奖励")
+            else:
+                print("    说明: 样本量与理想值匹配，无额外调整")
 
         # 计算加权平均的维度得分
         if not project_scores:
@@ -511,13 +544,13 @@ class ScoreCalculator:
 
     def get_score_level(self, score: float) -> str:
         """获取分数等级"""
-        if score >= 80:
+        if score >= Config.SCORE_LEVEL['优秀']:
             return "优秀"
-        elif score >= 70:
+        elif score >= Config.SCORE_LEVEL['良好']:
             return "良好"
-        elif score >= 60:
+        elif score >= Config.SCORE_LEVEL['合格']:
             return "合格"
-        elif score >= 55:
+        elif score >= Config.SCORE_LEVEL['基本合格']:
             return "基本合格"
         else:
             return "不合格"

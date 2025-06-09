@@ -79,12 +79,25 @@ class Config:
     }
     # 样本量调整参数
     SAMPLE_ADJUSTMENT_CONFIG = {
-            'enable': True,  # 是否启用样本量调整
-            'min_sample_size': 2,  # 最小样本量阈值
-            'optimal_sample_size': 8,  # 最优样本量
-            'max_penalty': 0.25,  # 最大惩罚系数（25%）
-            'max_bonus': 0.15  # 最大奖励系数（15%）
-        }
+        'enable': True,                  # 是否启用样本量调整
+        'method': 'linear',                  # 'ci' / 'eb' / 'linear'
+        # —— CI 下限法参数 ——
+        'confidence_level': 0.95,        # 置信水平
+        # z‐critical table（不用安装 scipy，常见置信水平）
+        'z_table': {
+            0.90: 1.645,
+            0.95: 1.96,
+            0.99: 2.576
+        },
+        # —— EB 平滑法参数 ——
+        'eb_prior_mean': 2.5,            # 全局先验均值（例如中点3分）
+        'eb_lambda': 5.6,                # 收缩强度 λ
+        # —— 线性惩罚/奖励法（保留原实现） ——
+        'min_sample_size': 3,
+        'optimal_sample_size': 7,
+        'max_penalty': 0.2,
+        'max_bonus': 0.15,
+    }
     # 是否启用LLM
     ENABLE_LLM = False
     # 是否导入数据
@@ -94,6 +107,14 @@ class Config:
     ALL 全部生成
     SUMMARY_ONLY 仅生成总结报告
     SUPPLIER_ONLY 进生成供应商报告
+    other （任意其他选项）不生成报告
     """
-    GENERATE_REPORTS_MODE = 'SUMMARY_ONLY'
-
+    GENERATE_REPORTS_MODE = 'NO'
+    # 设置评价等级
+    """获取分数等级"""
+    SCORE_LEVEL = {
+        '优秀': 80,
+        '良好': 70,
+        '合格': 60,
+        '基本合格': 50
+    }

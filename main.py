@@ -241,6 +241,8 @@ class SupplierEvaluationSystem:
                     )
 
                     print(f"已生成报告: {report_path}")
+                else:
+                    print(f"跳过生成供应商：{supplier}评估报告")
 
         # 生成分地区汇总排名报告
         summary_path = os.path.join(
@@ -269,6 +271,8 @@ class SupplierEvaluationSystem:
                 db_manager=self.db_manager  # 传递数据库管理器
             )
             print(f"\n已生成汇总报告: {summary_path}")
+        else:
+            print(f"跳过生成汇总报告")
 
         # 打印排名结果
         print("\n=== 供应商综合排名（所有地区） ===")
